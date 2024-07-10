@@ -5,7 +5,7 @@
 
 Handle missing values, non-numeric values, data leakage, and more.
 
-[Kaggle Pandas - Course Link](https://www.kaggle.com/learn/intermediate-machine-learning)
+[Kaggle Intermediate Machine Learning - Course Link](https://www.kaggle.com/learn/intermediate-machine-learning)
 
 ### Lessons
 
