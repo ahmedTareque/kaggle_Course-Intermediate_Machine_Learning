@@ -1,0 +1,833 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "c407c9b2",
+   "metadata": {
+    "papermill": {
+     "duration": 0.007944,
+     "end_time": "2024-07-12T00:35:48.411986",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:48.404042",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "**This notebook is an exercise in the [Intermediate Machine Learning](https://www.kaggle.com/learn/intermediate-machine-learning) course.  You can reference the tutorial at [this link](https://www.kaggle.com/alexisbcook/xgboost).**\n",
+    "\n",
+    "---\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "0092cf7d",
+   "metadata": {
+    "papermill": {
+     "duration": 0.006572,
+     "end_time": "2024-07-12T00:35:48.425745",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:48.419173",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "In this exercise, you will use your new knowledge to train a model with **gradient boosting**.\n",
+    "\n",
+    "# Setup\n",
+    "\n",
+    "The questions below will give you feedback on your work. Run the following cell to set up the feedback system."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "e055ff76",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:48.441503Z",
+     "iopub.status.busy": "2024-07-12T00:35:48.441039Z",
+     "iopub.status.idle": "2024-07-12T00:35:52.445868Z",
+     "shell.execute_reply": "2024-07-12T00:35:52.444851Z"
+    },
+    "papermill": {
+     "duration": 4.016707,
+     "end_time": "2024-07-12T00:35:52.449396",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:48.432689",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Setup Complete\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Set up code checking\n",
+    "import os\n",
+    "if not os.path.exists(\"../input/train.csv\"):\n",
+    "    os.symlink(\"../input/home-data-for-ml-course/train.csv\", \"../input/train.csv\")  \n",
+    "    os.symlink(\"../input/home-data-for-ml-course/test.csv\", \"../input/test.csv\") \n",
+    "from learntools.core import binder\n",
+    "binder.bind(globals())\n",
+    "from learntools.ml_intermediate.ex6 import *\n",
+    "print(\"Setup Complete\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b7a436e9",
+   "metadata": {
+    "papermill": {
+     "duration": 0.00683,
+     "end_time": "2024-07-12T00:35:52.464299",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:52.457469",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "You will work with the [Housing Prices Competition for Kaggle Learn Users](https://www.kaggle.com/c/home-data-for-ml-course) dataset from the previous exercise. \n",
+    "\n",
+    "![Ames Housing dataset image](https://storage.googleapis.com/kaggle-media/learn/images/lTJVG4e.png)\n",
+    "\n",
+    "Run the next code cell without changes to load the training and validation sets in `X_train`, `X_valid`, `y_train`, and `y_valid`.  The test set is loaded in `X_test`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "bb2e73bf",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:52.480804Z",
+     "iopub.status.busy": "2024-07-12T00:35:52.480397Z",
+     "iopub.status.idle": "2024-07-12T00:35:52.701439Z",
+     "shell.execute_reply": "2024-07-12T00:35:52.700136Z"
+    },
+    "papermill": {
+     "duration": 0.232726,
+     "end_time": "2024-07-12T00:35:52.704456",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:52.471730",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "from sklearn.model_selection import train_test_split\n",
+    "\n",
+    "# Read the data\n",
+    "X = pd.read_csv('../input/train.csv', index_col='Id')\n",
+    "X_test_full = pd.read_csv('../input/test.csv', index_col='Id')\n",
+    "\n",
+    "# Remove rows with missing target, separate target from predictors\n",
+    "X.dropna(axis=0, subset=['SalePrice'], inplace=True)\n",
+    "y = X.SalePrice              \n",
+    "X.drop(['SalePrice'], axis=1, inplace=True)\n",
+    "\n",
+    "# Break off validation set from training data\n",
+    "X_train_full, X_valid_full, y_train, y_valid = train_test_split(X, y, train_size=0.8, test_size=0.2,\n",
+    "                                                                random_state=0)\n",
+    "\n",
+    "# \"Cardinality\" means the number of unique values in a column\n",
+    "# Select categorical columns with relatively low cardinality (convenient but arbitrary)\n",
+    "low_cardinality_cols = [cname for cname in X_train_full.columns if X_train_full[cname].nunique() < 10 and \n",
+    "                        X_train_full[cname].dtype == \"object\"]\n",
+    "\n",
+    "# Select numeric columns\n",
+    "numeric_cols = [cname for cname in X_train_full.columns if X_train_full[cname].dtype in ['int64', 'float64']]\n",
+    "\n",
+    "# Keep selected columns only\n",
+    "my_cols = low_cardinality_cols + numeric_cols\n",
+    "X_train = X_train_full[my_cols].copy()\n",
+    "X_valid = X_valid_full[my_cols].copy()\n",
+    "X_test = X_test_full[my_cols].copy()\n",
+    "\n",
+    "# One-hot encode the data (to shorten the code, we use pandas)\n",
+    "X_train = pd.get_dummies(X_train)\n",
+    "X_valid = pd.get_dummies(X_valid)\n",
+    "X_test = pd.get_dummies(X_test)\n",
+    "X_train, X_valid = X_train.align(X_valid, join='left', axis=1)\n",
+    "X_train, X_test = X_train.align(X_test, join='left', axis=1)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8875b99e",
+   "metadata": {
+    "papermill": {
+     "duration": 0.00674,
+     "end_time": "2024-07-12T00:35:52.718325",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:52.711585",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "# Step 1: Build model\n",
+    "\n",
+    "### Part A\n",
+    "\n",
+    "In this step, you'll build and train your first model with gradient boosting.\n",
+    "\n",
+    "- Begin by setting `my_model_1` to an XGBoost model.  Use the [XGBRegressor](https://xgboost.readthedocs.io/en/latest/python/python_api.html#xgboost.XGBRegressor) class, and set the random seed to 0 (`random_state=0`).  **Leave all other parameters as default.**\n",
+    "- Then, fit the model to the training data in `X_train` and `y_train`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "7b23fd9c",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:52.734356Z",
+     "iopub.status.busy": "2024-07-12T00:35:52.733859Z",
+     "iopub.status.idle": "2024-07-12T00:35:53.299766Z",
+     "shell.execute_reply": "2024-07-12T00:35:53.298647Z"
+    },
+    "papermill": {
+     "duration": 0.57749,
+     "end_time": "2024-07-12T00:35:53.302924",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:52.725434",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "data": {
+      "application/javascript": [
+       "parent.postMessage({\"jupyterEvent\": \"custom.exercise_interaction\", \"data\": {\"outcomeType\": 1, \"valueTowardsCompletion\": 0.5, \"interactionType\": 1, \"questionType\": 2, \"questionId\": \"1.1_Model1A\", \"learnToolsVersion\": \"0.3.4\", \"failureMessage\": \"\", \"exceptionClass\": \"\", \"trace\": \"\"}}, \"*\")"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Javascript object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/markdown": [
+       "<span style=\"color:#33cc33\">Correct</span>"
+      ],
+      "text/plain": [
+       "Correct"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "from xgboost import XGBRegressor\n",
+    "\n",
+    "# Define the model\n",
+    "my_model_1 = XGBRegressor(random_state=0)\n",
+    "my_model_1.fit(X_train, y_train)\n",
+    "\n",
+    "\n",
+    "# Check your answer\n",
+    "step_1.a.check()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "63a51d28",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:53.320750Z",
+     "iopub.status.busy": "2024-07-12T00:35:53.320344Z",
+     "iopub.status.idle": "2024-07-12T00:35:53.325520Z",
+     "shell.execute_reply": "2024-07-12T00:35:53.324279Z"
+    },
+    "papermill": {
+     "duration": 0.016627,
+     "end_time": "2024-07-12T00:35:53.328124",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.311497",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "# Lines below will give you a hint or solution code\n",
+    "#step_1.a.hint()\n",
+    "#step_1.a.solution()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "48221393",
+   "metadata": {
+    "papermill": {
+     "duration": 0.007201,
+     "end_time": "2024-07-12T00:35:53.342962",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.335761",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "### Part B\n",
+    "\n",
+    "Set `predictions_1` to the model's predictions for the validation data.  Recall that the validation features are stored in `X_valid`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "84c79f9f",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:53.360508Z",
+     "iopub.status.busy": "2024-07-12T00:35:53.359184Z",
+     "iopub.status.idle": "2024-07-12T00:35:53.429190Z",
+     "shell.execute_reply": "2024-07-12T00:35:53.427874Z"
+    },
+    "papermill": {
+     "duration": 0.081574,
+     "end_time": "2024-07-12T00:35:53.431982",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.350408",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Mean Absolute Error: 18161.82412510702\n"
+     ]
+    },
+    {
+     "data": {
+      "application/javascript": [
+       "parent.postMessage({\"jupyterEvent\": \"custom.exercise_interaction\", \"data\": {\"outcomeType\": 1, \"valueTowardsCompletion\": 0.5, \"interactionType\": 1, \"questionType\": 2, \"questionId\": \"1.2_Model1B\", \"learnToolsVersion\": \"0.3.4\", \"failureMessage\": \"\", \"exceptionClass\": \"\", \"trace\": \"\"}}, \"*\")"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Javascript object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/markdown": [
+       "<span style=\"color:#33cc33\">Correct</span>"
+      ],
+      "text/plain": [
+       "Correct"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "from sklearn.metrics import mean_absolute_error\n",
+    "\n",
+    "# Get predictions\n",
+    "predictions_1 = my_model_1.predict(X_valid)\n",
+    "print(\"Mean Absolute Error: \" + str(mean_absolute_error(predictions_1, y_valid)))\n",
+    "\n",
+    "# Check your answer\n",
+    "step_1.b.check()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "45ada266",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:53.450910Z",
+     "iopub.status.busy": "2024-07-12T00:35:53.450507Z",
+     "iopub.status.idle": "2024-07-12T00:35:53.455846Z",
+     "shell.execute_reply": "2024-07-12T00:35:53.454538Z"
+    },
+    "papermill": {
+     "duration": 0.01788,
+     "end_time": "2024-07-12T00:35:53.458646",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.440766",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "# Lines below will give you a hint or solution code\n",
+    "#step_1.b.hint()\n",
+    "#step_1.b.solution()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "58e93408",
+   "metadata": {
+    "papermill": {
+     "duration": 0.007739,
+     "end_time": "2024-07-12T00:35:53.474454",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.466715",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "### Part C\n",
+    "\n",
+    "Finally, use the `mean_absolute_error()` function to calculate the mean absolute error (MAE) corresponding to the predictions for the validation set.  Recall that the labels for the validation data are stored in `y_valid`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "d55fe70c",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:53.492478Z",
+     "iopub.status.busy": "2024-07-12T00:35:53.492060Z",
+     "iopub.status.idle": "2024-07-12T00:35:53.504658Z",
+     "shell.execute_reply": "2024-07-12T00:35:53.503442Z"
+    },
+    "papermill": {
+     "duration": 0.024966,
+     "end_time": "2024-07-12T00:35:53.507394",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.482428",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Mean Absolute Error: 18161.82412510702\n"
+     ]
+    },
+    {
+     "data": {
+      "application/javascript": [
+       "parent.postMessage({\"jupyterEvent\": \"custom.exercise_interaction\", \"data\": {\"outcomeType\": 1, \"valueTowardsCompletion\": 0.5, \"interactionType\": 1, \"questionType\": 2, \"questionId\": \"1.3_Model1C\", \"learnToolsVersion\": \"0.3.4\", \"failureMessage\": \"\", \"exceptionClass\": \"\", \"trace\": \"\"}}, \"*\")"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Javascript object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/markdown": [
+       "<span style=\"color:#33cc33\">Correct</span>"
+      ],
+      "text/plain": [
+       "Correct"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "# Calculate MAE\n",
+    "mae_1 = mean_absolute_error(predictions_1, y_valid)\n",
+    "\n",
+    "# Uncomment to print MAE\n",
+    "print(\"Mean Absolute Error:\" , mae_1)\n",
+    "\n",
+    "# Check your answer\n",
+    "step_1.c.check()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "d0bfbd1a",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:53.526689Z",
+     "iopub.status.busy": "2024-07-12T00:35:53.525776Z",
+     "iopub.status.idle": "2024-07-12T00:35:53.531038Z",
+     "shell.execute_reply": "2024-07-12T00:35:53.529800Z"
+    },
+    "papermill": {
+     "duration": 0.017829,
+     "end_time": "2024-07-12T00:35:53.533708",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.515879",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "# Lines below will give you a hint or solution code\n",
+    "#step_1.c.hint()\n",
+    "#step_1.c.solution()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "72b3126c",
+   "metadata": {
+    "papermill": {
+     "duration": 0.008209,
+     "end_time": "2024-07-12T00:35:53.551857",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.543648",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "# Step 2: Improve the model\n",
+    "\n",
+    "Now that you've trained a default model as baseline, it's time to tinker with the parameters, to see if you can get better performance!\n",
+    "- Begin by setting `my_model_2` to an XGBoost model, using the [XGBRegressor](https://xgboost.readthedocs.io/en/latest/python/python_api.html#xgboost.XGBRegressor) class.  Use what you learned in the previous tutorial to figure out how to change the default parameters (like `n_estimators` and `learning_rate`) to get better results.\n",
+    "- Then, fit the model to the training data in `X_train` and `y_train`.\n",
+    "- Set `predictions_2` to the model's predictions for the validation data.  Recall that the validation features are stored in `X_valid`.\n",
+    "- Finally, use the `mean_absolute_error()` function to calculate the mean absolute error (MAE) corresponding to the predictions on the validation set.  Recall that the labels for the validation data are stored in `y_valid`.\n",
+    "\n",
+    "In order for this step to be marked correct, your model in `my_model_2` must attain lower MAE than the model in `my_model_1`. "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "4311debc",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:53.571126Z",
+     "iopub.status.busy": "2024-07-12T00:35:53.570681Z",
+     "iopub.status.idle": "2024-07-12T00:35:58.243314Z",
+     "shell.execute_reply": "2024-07-12T00:35:58.242303Z"
+    },
+    "papermill": {
+     "duration": 4.685947,
+     "end_time": "2024-07-12T00:35:58.246313",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:53.560366",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Mean Absolute Error: 17224.27947078339\n",
+      "Mean Absolute Error: 17224.27947078339\n"
+     ]
+    },
+    {
+     "data": {
+      "application/javascript": [
+       "parent.postMessage({\"jupyterEvent\": \"custom.exercise_interaction\", \"data\": {\"outcomeType\": 1, \"valueTowardsCompletion\": 0.5, \"interactionType\": 1, \"questionType\": 2, \"questionId\": \"2_Model2\", \"learnToolsVersion\": \"0.3.4\", \"failureMessage\": \"\", \"exceptionClass\": \"\", \"trace\": \"\"}}, \"*\")"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Javascript object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/markdown": [
+       "<span style=\"color:#33cc33\">Correct</span>"
+      ],
+      "text/plain": [
+       "Correct"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "# Define the model\n",
+    "my_model_2 = XGBRegressor(n_estimators=1000, learning_rate=0.05)\n",
+    "my_model_2.fit(X_train, y_train)\n",
+    "\n",
+    "# Get predictions\n",
+    "predictions_2 = my_model_2.predict(X_valid)\n",
+    "print(\"Mean Absolute Error: \" + str(mean_absolute_error(predictions_2, y_valid)))\n",
+    "\n",
+    "# Calculate MAE\n",
+    "mae_2 = mean_absolute_error(predictions_2, y_valid)\n",
+    "\n",
+    "# Uncomment to print MAE\n",
+    "print(\"Mean Absolute Error:\" , mae_2)\n",
+    "\n",
+    "# Check your answer\n",
+    "step_2.check()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "5b49e67d",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:58.267555Z",
+     "iopub.status.busy": "2024-07-12T00:35:58.267078Z",
+     "iopub.status.idle": "2024-07-12T00:35:58.272751Z",
+     "shell.execute_reply": "2024-07-12T00:35:58.271532Z"
+    },
+    "papermill": {
+     "duration": 0.018923,
+     "end_time": "2024-07-12T00:35:58.275581",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:58.256658",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "# Lines below will give you a hint or solution code\n",
+    "#step_2.hint()\n",
+    "#step_2.solution()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cb1aadb5",
+   "metadata": {
+    "papermill": {
+     "duration": 0.009548,
+     "end_time": "2024-07-12T00:35:58.295518",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:58.285970",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "# Step 3: Break the model\n",
+    "\n",
+    "In this step, you will create a model that performs worse than the original model in Step 1.  This will help you to develop your intuition for how to set parameters.  You might even find that you accidentally get better performance, which is ultimately a nice problem to have and a valuable learning experience!\n",
+    "- Begin by setting `my_model_3` to an XGBoost model, using the [XGBRegressor](https://xgboost.readthedocs.io/en/latest/python/python_api.html#xgboost.XGBRegressor) class.  Use what you learned in the previous tutorial to figure out how to change the default parameters (like `n_estimators` and `learning_rate`) to design a model to get high MAE.\n",
+    "- Then, fit the model to the training data in `X_train` and `y_train`.\n",
+    "- Set `predictions_3` to the model's predictions for the validation data.  Recall that the validation features are stored in `X_valid`.\n",
+    "- Finally, use the `mean_absolute_error()` function to calculate the mean absolute error (MAE) corresponding to the predictions on the validation set.  Recall that the labels for the validation data are stored in `y_valid`.\n",
+    "\n",
+    "In order for this step to be marked correct, your model in `my_model_3` must attain higher MAE than the model in `my_model_1`. "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "27926840",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:58.316998Z",
+     "iopub.status.busy": "2024-07-12T00:35:58.316560Z",
+     "iopub.status.idle": "2024-07-12T00:35:58.488518Z",
+     "shell.execute_reply": "2024-07-12T00:35:58.487063Z"
+    },
+    "papermill": {
+     "duration": 0.187205,
+     "end_time": "2024-07-12T00:35:58.491838",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:58.304633",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Mean Absolute Error: 42678.815550085616\n"
+     ]
+    },
+    {
+     "data": {
+      "application/javascript": [
+       "parent.postMessage({\"jupyterEvent\": \"custom.exercise_interaction\", \"data\": {\"outcomeType\": 1, \"valueTowardsCompletion\": 0.5, \"interactionType\": 1, \"questionType\": 2, \"questionId\": \"3_Model3\", \"learnToolsVersion\": \"0.3.4\", \"failureMessage\": \"\", \"exceptionClass\": \"\", \"trace\": \"\"}}, \"*\")"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Javascript object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/markdown": [
+       "<span style=\"color:#33cc33\">Correct</span>"
+      ],
+      "text/plain": [
+       "Correct"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "# Define the model\n",
+    "my_model_3 = XGBRegressor(n_estimators=1)\n",
+    "\n",
+    "# Fit the model\n",
+    "my_model_3.fit(X_train, y_train)\n",
+    "\n",
+    "# Get predictions\n",
+    "predictions_3 = my_model_3.predict(X_valid)\n",
+    "\n",
+    "# Calculate MAE\n",
+    "mae_3 = mean_absolute_error(predictions_3, y_valid)\n",
+    "\n",
+    "# Uncomment to print MAE\n",
+    "print(\"Mean Absolute Error:\" , mae_3)\n",
+    "\n",
+    "# Check your answer\n",
+    "step_3.check()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "id": "f4428e48",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-07-12T00:35:58.514943Z",
+     "iopub.status.busy": "2024-07-12T00:35:58.514535Z",
+     "iopub.status.idle": "2024-07-12T00:35:58.519997Z",
+     "shell.execute_reply": "2024-07-12T00:35:58.518741Z"
+    },
+    "papermill": {
+     "duration": 0.020386,
+     "end_time": "2024-07-12T00:35:58.522967",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:58.502581",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "# Lines below will give you a hint or solution code\n",
+    "#step_3.hint()\n",
+    "#step_3.solution()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1d28ad5d",
+   "metadata": {
+    "papermill": {
+     "duration": 0.009625,
+     "end_time": "2024-07-12T00:35:58.542928",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:58.533303",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "# Keep going\n",
+    "\n",
+    "Continue to learn about **[data leakage](https://www.kaggle.com/alexisbcook/data-leakage)**.  This is an important issue for a data scientist to understand, and it has the potential to ruin your models in subtle and dangerous ways!"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "2674b2a8",
+   "metadata": {
+    "papermill": {
+     "duration": 0.009509,
+     "end_time": "2024-07-12T00:35:58.562518",
+     "exception": false,
+     "start_time": "2024-07-12T00:35:58.553009",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "---\n",
+    "\n",
+    "\n",
+    "\n",
+    "\n",
+    "*Have questions or comments? Visit the [course discussion forum](https://www.kaggle.com/learn/intermediate-machine-learning/discussion) to chat with other learners.*"
+   ]
+  }
+ ],
+ "metadata": {
+  "kaggle": {
+   "accelerator": "none",
+   "dataSources": [
+    {
+     "databundleVersionId": 111096,
+     "sourceId": 10211,
+     "sourceType": "competition"
+    }
+   ],
+   "isGpuEnabled": false,
+   "isInternetEnabled": false,
+   "language": "python",
+   "sourceType": "notebook"
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.13"
+  },
+  "papermill": {
+   "default_parameters": {},
+   "duration": 14.666089,
+   "end_time": "2024-07-12T00:35:59.296546",
+   "environment_variables": {},
+   "exception": null,
+   "input_path": "__notebook__.ipynb",
+   "output_path": "__notebook__.ipynb",
+   "parameters": {},
+   "start_time": "2024-07-12T00:35:44.630457",
+   "version": "2.5.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
